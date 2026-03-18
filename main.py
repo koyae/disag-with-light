@@ -1,4 +1,4 @@
-import pydaqmx
+import PyDAQmx
 
 def main():
     print("Hello from disag-with-light!")
