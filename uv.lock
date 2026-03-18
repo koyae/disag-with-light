@@ -1,0 +1,20 @@
+version = 1
+revision = 3
+requires-python = ">=3.13"
+
+[[package]]
+name = "disag-with-light"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "pydaqmx" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydaqmx", specifier = ">=1.4.7" }]
+
+[[package]]
+name = "pydaqmx"
+version = "1.4.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/44/b3a8f63576513e88ad7b072389c48f5ec17b55ea48234f9d9cbcf3bdfe2a/pydaqmx-1.4.7.tar.gz", hash = "sha256:95b0c065bc14f27ea12f8415cd400b870972e659a0d72120627ce5250ac5d161", size = 18191, upload-time = "2025-03-12T17:18:53.021Z" }
