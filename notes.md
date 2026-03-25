@@ -6,3 +6,5 @@ Ordered [these diodes](https://www.amazon.com/dp/B0CZRH2DHJ?ref=ppx_yo2ov_dt_b_f
 
 National Instruments documentation confirms that the proper driver for both the NI-9234/9162 unit and the NI  myDAQ is the DAQmx driver, which can be used without needing LabView. There's a Python module called [PyDAQmx](https://pypi.org/project/PyDAQmx) which we may try out first.
 
+After some wiring adventures got the photoresistor to convert to digital data with NI myDAQ. Integrated into Python to record and manipulate data with PyDAQmx. Data appears reasonable.
+
