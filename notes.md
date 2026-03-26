@@ -8,3 +8,8 @@ National Instruments documentation confirms that the proper driver for both the 
 
 After some wiring adventures got the photoresistor to convert to digital data with NI myDAQ. Integrated into Python to record and manipulate data with PyDAQmx. Data appears reasonable.
 
+## 2026-03-25
+
+Learned that we had mistakenly been using the ('floating') digital ground port instead of the analog one on the MyDAQ, so we swapped to the analog ground, and also tried out one of the photodiodes, which did not immediately behave as expected, despite purporting to take the same wiring configuration. Unless we had our wires accidentally crossed, we suspect that the (lowercase-D) dupont connectors aren't engaging well for the photodiodes, which may mean soldering at least one set of ends. TechSpark is woefully lacking in certain basic equipment at this point, and didn't even have precision screwdrivers this evening, whereas they did. I (PEKO) likely need to bring in my own drivers.
+
+Also discovered that the MyDAQ can sample from analog signals at up to 200,000 Hz, though no higher. Interestingly, the NI-9234/9162's documentation indicates a maxiumum sampling rate of 51,200 samples per second, for comparison, though the samples themselves should be of higher quality (higher instantaneous discrimination of levels -- up to 24, versus the MyDAQ's 16 -- less noisy, etc.) and presumably, this rate is independent of the number of input sources connected (up to 4).
