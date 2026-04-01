@@ -37,10 +37,10 @@ def draw_events(ax, events, ymin, ymax):
     if events is None:
         return
     for _, row in events.iterrows():
-        color = "green" if row["label"].endswith("_on") else "red"
-        ax.axvline(row["elapsed_s"], color=color, lw=1, linestyle="--", alpha=0.8)
+        #color = "green" if row["label"].endswith("_on") else "red"
+        ax.axvline(row["elapsed_s"], color="green", lw=1, linestyle="--", alpha=0.8)
         ax.text(row["elapsed_s"], ymax, row["label"],
-                rotation=90, fontsize=7, va="top", color=color, alpha=0.8)
+                rotation=90, fontsize=7, va="top", color="red", alpha=0.8)
 
 ax1 = axes[0]
 ax1.plot(t, v, lw=0.4, color="steelblue")
