@@ -1,0 +1,5 @@
+sample_index,elapsed_s,label
+110000,5.3000,heatgun_on
+259000,20.3000,heatgun_off
+367000,32.7000,on2
+458000,43.7000,off2
