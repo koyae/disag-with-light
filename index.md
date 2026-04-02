@@ -29,3 +29,7 @@ Obtained lamp and headed to TechSpark to attempt soldering one of the photodiode
 ### 2026-03-31 Notes
 
 Used the breadboard and one of the other trio pin bundles to help stabilize and level the piece. (The other set of pins can just be stuck into the breadboard in the normal orientation such that the plastic collar holds up the other end of the little board.) Irons in TechSpark can be set to a specifc temperature. 425 &deg; seemed to be the minimum temperature needed when heating only a pin, per the approach that appears to be recommended to avoid a 'cold solder joint,' which may work poorly. AK to collect initial data tomorrow so we can have a more meaningful discussion with Dr. B on Thursday.
+
+## 2026-04-01
+
+Collected data from variety of appliances (kettle, toaster, heat gun, fridge, microwave) and bulb types (incandescent, CFL, LED). Load signatures typically visible.
