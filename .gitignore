@@ -1,0 +1,7 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Data files — store these separately (too large for GitHub)
+data/

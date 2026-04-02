@@ -39,19 +39,21 @@ with nidaqmx.Task() as task:
         samps_per_chan=BUFFER_SIZE * 10,
     )
 
-    with open(DATA_FILE, "w", newline="") as df, \
-         open(EVENTS_FILE, "w", newline="") as ef:
 
-        writer        = csv.writer(df)
-        events_writer = csv.writer(ef)
-        writer.writerow(["sample_index", "elapsed_s", "voltage_V"])
-        events_writer.writerow(["sample_index", "elapsed_s", "label"])
+    try:
+        with open(DATA_FILE, "w", newline="") as df, \
+            open(EVENTS_FILE, "w", newline="") as ef:
 
-        t = threading.Thread(target=listen_for_events, args=(events_writer, ef), daemon=True)
-        t.start()
+            writer        = csv.writer(df)
+            events_writer = csv.writer(ef)
+            writer.writerow(["sample_index", "elapsed_s", "voltage_V"])
+            events_writer.writerow(["sample_index", "elapsed_s", "label"])
 
-        print(f"Recording to {DATA_FILE} — Ctrl+C to stop.")
-        try:
+            t = threading.Thread(target=listen_for_events, args=(events_writer, ef), daemon=True)
+            t.start()
+
+            print(f"Recording to {DATA_FILE} — Ctrl+C to stop.")
+
             while True:
                 samples = task.read(number_of_samples_per_channel=BUFFER_SIZE)
                 rows = [
@@ -61,5 +63,10 @@ with nidaqmx.Task() as task:
                 writer.writerows(rows)
                 sample_index += len(samples)
                 df.flush()
-        except KeyboardInterrupt:
-            print(f"\nDone. Data saved to {DATA_FILE}")
+    except KeyboardInterrupt:
+        import os
+        df.close()
+        print(os.getcwd())
+        import subprocess 
+        subprocess.run(['uv', 'run', 'scripts/visualize.py', DATA_FILE])
+        print(f"\nDone. Data saved to {DATA_FILE}")
