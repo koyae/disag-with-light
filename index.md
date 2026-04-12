@@ -33,3 +33,21 @@ Used the breadboard and one of the other trio pin bundles to help stabilize and 
 ## 2026-04-01
 
 Collected data from variety of appliances (kettle, toaster, heat gun, fridge, microwave) and bulb types (incandescent, CFL, LED). Load signatures typically visible.
+
+## 2026-04-11
+
+Joined with Archie over Zoom (following his recovery from what's hopefully the worst of a bit of illness earlier this week) to coordinate per Assignment 4. The ideas we went over were mostly incremental refinements of ideas we'd discussed previously. Our major challenges will be:
+
+1. __Time__. Specifically overlapping time; Archie and I (PEKO) need to coordinate to find perhaps 9 hours in total just for collecting samples. 3 to 4 sessions of data collection should be sufficient. Efficient collection and staying on task will be easier with both of us present, especially since we don't each have our own separate sensor setups.
+
+2. __Procedure__. If we are shooting to collect 1000 events or so ourselves, we will need to be organized and better solidify our existing procedure. Even setting speed aside, keeping track of exactly what conditions we've collected will be critical for model building. So we can smoothly progress through the various states of interest, printing out a grid/checklist is probably easiest.
+
+3. __Sampling robustness__. I (PEKO) wonder whether the Raspberry Pi that's on the breadboard we now have could be used to read the sensor at a high enough rate to be useful? This would make our setup a bit lack finicky.
+
+**Number of samples:** As per my (PEKO's) submission for Assignment 4, hitting 500 to 1000 samples should not be out of reach if we are organized. We have about 5 locations we can use, with 3 or more plugs a piece. We have 3 distinct bulb-types and can try to see whether there is a major difference given wattage (20 vs 60, for incandescents) or things like frosting. Regardless, at least 3 types there. We can vary the distance of the sensor to the light source and call this "close/medium/far." Day/night conditions (or just general possible light interference) might be another multiplier (two states). We have a number of devices (6 or 7) that should not be overly difficult to transport or find in our test locations, which represent some different load categories/shapes; a vacuum cleaner should be an inductive load, as should a coffee grinder or a plug-in dremel. Resistive loads are easy to find (toasters, water kettles), which in some cases have a mixed element (a fan in a space heater or blow dryer). Nonlinear loads should include microwaves and televisions, though these will be hard to move so we won't be able to be as consistent about them. Although consumer devices are generally not capacative, an uninterrupted power supply might be an example of something we can find, but... to get back to counting matters, we have something like:
+
+$$ nCr(~7 devices, 4 states including on-off order) \times 4 locations \times 3 distances \times 3 bulb types \times 3 plugs \times 2 natural-light states \times 2 sampling rates = 15,120 $$
+
+Although capturing the full bredth of these combinations will not be possible, the above means there is plenty of space to explore.
+
+Aside: One change not mentioned here previously is that we will have some participation on this project by another student in our academic program who unexpectedly showed interest; Vinitha may be interested in helping to collect samples, wrangling data or data piplines, ML models, or some combination. We absolutely must coordinate with her come Monday, as knowing exactly which tasks she's interested in will help with planning.
