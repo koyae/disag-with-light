@@ -51,3 +51,14 @@ $$ nCr(~7 devices, 4 states including on-off order) \times 4 locations \times 3 
 Although capturing the full bredth of these combinations will not be possible, the above means there is plenty of space to explore.
 
 Aside: One change not mentioned here previously is that we will have some participation on this project by another student in our academic program who unexpectedly showed interest; Vinitha may be interested in helping to collect samples, wrangling data or data piplines, ML models, or some combination. We absolutely must coordinate with her come Monday, as knowing exactly which tasks she's interested in will help with planning.
+
+## 2026-04-20
+
+After indicating a few times she'd wade into the reading and possibly construct a basic model from our pilot data, Vinitha announced aroudn noon she'll be swapping to one of the 'canned' projects for her Deep Learning course. We lose a set of hands this way, but it could be worse.
+
+## 2026-04-21
+
+Got Aqara US Smart Plug working with Home Assistant Green and HA ZBT-2 antenna (via Zigbee 3.0) in the hopes of easier execution of sampling procedures. We also ordered a few more of these so we can obtain richer combinations of devices without stopping to reconfigure quite as much, and also without semi-manually recording activation/deactivation events.
+
+Wemo plugs no longer work per the instructions, since Belkin closed down new registrations for Wemo accounts back in January. According to [this blogpost]([200~https://www.xda-developers.com/belkin-killed-wemo-smart-plugs-but-i-brought-mine-back-to-life/), it's fairly trivial to gain control of them via [PyWeMo](https://github.com/pywemo/pywemo) without even having an account, but that seems like a side-quest for another day.
+
