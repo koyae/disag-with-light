@@ -62,3 +62,7 @@ Got Aqara US Smart Plug working with Home Assistant Green and HA ZBT-2 antenna (
 
 Wemo plugs no longer work per the instructions, since Belkin closed down new registrations for Wemo accounts back in January. According to [this blogpost]([200~https://www.xda-developers.com/belkin-killed-wemo-smart-plugs-but-i-brought-mine-back-to-life/), it's fairly trivial to gain control of them via [PyWeMo](https://github.com/pywemo/pywemo) without even having an account, but that seems like a side-quest for another day.
 
+## 2026-04-22
+Got four smart plugs running and collected data programmatically from 4 appliances: fridge, kettle, space heater, and computer. Collected data for LED and incandescent bulbs cycling through 10 on/off events per device. Trained four types of models: log regressions, KNN, SVM, and random forest. Models were catching the space heater but generally missing the others unless they cheated.
+
+
