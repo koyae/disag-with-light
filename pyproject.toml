@@ -10,5 +10,8 @@ dependencies = [
     "numpy>=2.4.3",
     "pandas>=3.0.1",
     "pydaqmx>=1.4.7",
+    "scikit-learn>=1.8.0",
+    "scipy>=1.17.1",
+    "seaborn>=0.13.2",
     "six>=1.17.0",
 ]

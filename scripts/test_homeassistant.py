@@ -8,5 +8,5 @@ headers = {
     "Content-Type": "application/json",
 }
 
-r = requests.get(f"{HA_URL}/api/states/switch.maus01_lumi_lumi_plug", headers=headers)
+r = requests.get(f"{HA_URL}/api/states/switch.lumi_lumi_plug_maus01", headers=headers)
 print(r.json())
