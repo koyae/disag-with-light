@@ -25,6 +25,7 @@ TEST_SIZE    = 0.2
 RANDOM_STATE = 42
 FFT_MAX_FREQ = 500
 FFT_N_BINS   = 64
+MODEL_DIR = "models"
 
 # ---------------------------------------------------------------
 # Feature extraction
@@ -227,6 +228,29 @@ def train_and_evaluate(df):
             "hl":          hl,
             "exact_match": exact_match,
         }
+    print(f"DEBUG: about to save model to {MODEL_DIR}")
+
+    import joblib
+
+    os.makedirs(MODEL_DIR, exist_ok=True)
+
+    # save the best model by exact match score
+    best_name = max(results, key=lambda n: results[n]["exact_match"])
+    best_clf  = results[best_name]["clf"]
+
+    print(f"\nSaving best model ({best_name}) to {MODEL_DIR}/...")
+
+    joblib.dump(best_clf, os.path.join(MODEL_DIR, "model.joblib"))
+    joblib.dump({
+        "scaler":       scaler,
+        "feature_cols": feature_cols,
+        "label_cols":   label_cols,
+        "model_name":   best_name,
+    }, os.path.join(MODEL_DIR, "model_meta.joblib"))
+
+    print(f"  model.joblib")
+    print(f"  model_meta.joblib")
+    print(f"  best model: {best_name} (exact match: {results[best_name]['exact_match']:.3f})")
 
     return results, Y_test, label_cols, feature_cols, scaler, df_test
 
