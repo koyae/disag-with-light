@@ -3,9 +3,10 @@ import sys
 import os
 import time
 import threading
+import subprocess
+import json
 import numpy as np
 import pandas as pd
-import glob
 import joblib
 from scipy.signal import welch
 from sklearn.linear_model import LogisticRegression
@@ -14,25 +15,106 @@ from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.multioutput import MultiOutputClassifier
-import nidaqmx
-from nidaqmx.constants import TerminalConfiguration, AcquisitionType
+import socket
 
-# --- config ---
-CHANNEL      = "myDAQ1/ai0"
-SAMPLE_RATE  = 1_000
-BUFFER_SIZE  = 1000
-WINDOW_S     = 1.0
-WINDOW_SIZE  = int(WINDOW_S * SAMPLE_RATE)
-DATA_DIR     = "data"
-MODEL_DIR    = "models"
+# --- paths ---
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR   = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "data"))
+MODEL_DIR  = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "models"))
 
-MEAN_THRESHOLD  = 0.005
-STD_THRESHOLD   = 0.002
-BUFFER_SAMPLES  = WINDOW_SIZE * 4
+# --- DAQ config ---
+DAQ_HOST    = "169.254.204.78"   # Windows IP
+DAQ_PORT    = 9999
+SAMPLE_RATE = 10_000
+BUFFER_SIZE = 1000
+WINDOW_S    = 1.0
+WINDOW_SIZE = int(WINDOW_S * SAMPLE_RATE)
 
+# --- detection thresholds ---
+MEAN_THRESHOLD = 0.005
+STD_THRESHOLD  = 0.002
+BUFFER_SAMPLES = WINDOW_SIZE * 4
+
+# --- FFT config ---
 FFT_MAX_FREQ = 500
 FFT_N_BINS   = 64
 RANDOM_STATE = 42
+
+# --- Home Assistant config ---
+HA_URL   = "http://169.254.204.2:8123"
+HA_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI4YmZmNjJkNDA3ZDg0OGMzYWNlOWQwZDkwNDlmYmU3OCIsImlhdCI6MTc3NjgwMjkxNiwiZXhwIjoyMDkyMTYyOTE2fQ.deCyR50AtJKF2n1_rt_Dx0mcx4wtYoe5d5wLO_neTxM"
+
+PLUGS = {
+    "computer":     "switch.lumi_lumi_plug_maus01",
+    "space_heater": "switch.maus02_lumi_lumi_plug",
+    "kettle":       "switch.maus03_lumi_lumi_plug",
+    "fridge":       "switch.maus04_lumi_lumi_plug",
+}
+
+# ---------------------------------------------------------------
+# DAQ client
+# ---------------------------------------------------------------
+
+class DAQClient:
+    def __init__(self, host, port):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.connect((host, port))
+        print(f"Connected to DAQ server at {host}:{port}")
+
+    def read(self, n_samples):
+        raw_len = self._recv_exactly(4)
+        n_bytes = int.from_bytes(raw_len, "big")
+        raw     = self._recv_exactly(n_bytes)
+        return np.frombuffer(raw, dtype=np.float32)
+
+    def _recv_exactly(self, n):
+        buf = b""
+        while len(buf) < n:
+            chunk = self.sock.recv(n - len(buf))
+            if not chunk:
+                raise ConnectionError("DAQ server disconnected")
+            buf += chunk
+        return buf
+
+    def close(self):
+        self.sock.close()
+
+# ---------------------------------------------------------------
+# Home Assistant control via curl
+# ---------------------------------------------------------------
+
+def ha_call(method, endpoint, data=None):
+    cmd = [
+        "curl", "-s",
+        "-X", method,
+        "-H", f"Authorization: Bearer {HA_TOKEN}",
+        "-H", "Content-Type: application/json",
+    ]
+    if data:
+        cmd += ["-d", json.dumps(data)]
+    cmd.append(f"{HA_URL}{endpoint}")
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.stdout:
+            return json.loads(result.stdout)
+    except Exception as e:
+        print(f"  WARNING: ha_call failed — {e}")
+    return None
+
+def plug_on(entity_id):
+    try:
+        ha_call("POST", "/api/services/switch/turn_on",
+                {"entity_id": entity_id})
+    except Exception as e:
+        print(f"  WARNING: plug_on failed — {e}")
+
+def plug_off(entity_id):
+    try:
+        ha_call("POST", "/api/services/switch/turn_off",
+                {"entity_id": entity_id})
+    except Exception as e:
+        print(f"  WARNING: plug_off failed — {e}")
 
 # ---------------------------------------------------------------
 # Feature extraction
@@ -212,60 +294,10 @@ def format_prediction(state, elapsed):
 # ---------------------------------------------------------------
 
 def interactive_mode(model, scaler, feature_cols, label_cols):
+    import random
+
     print(f"Interactive mode — press Enter to trigger a random appliance, Ctrl+C to stop.")
     print(f"Window size: {WINDOW_S}s\n")
-
-    # --- Home Assistant config ---
-    HA_URL   = "http://homeassistant.local:8123"
-    HA_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI4YmZmNjJkNDA3ZDg0OGMzYWNlOWQwZDkwNDlmYmU3OCIsImlhdCI6MTc3NjgwMjkxNiwiZXhwIjoyMDkyMTYyOTE2fQ.deCyR50AtJKF2n1_rt_Dx0mcx4wtYoe5d5wLO_neTxM"
-    HA_HEADERS = {
-        "Authorization": f"Bearer {HA_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    PLUGS = {
-    "computer":     "switch.lumi_lumi_plug_maus01",
-    "space_heater": "switch.maus02_lumi_lumi_plug",
-    "kettle":       "switch.maus03_lumi_lumi_plug",
-    "fridge":       "switch.maus04_lumi_lumi_plug",
-    }
-
-    import subprocess
-    import json
-
-    def ha_call(method, endpoint, data=None):
-        HA_URL   = "http://169.254.204.2:8123"
-        HA_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI4YmZmNjJkNDA3ZDg0OGMzYWNlOWQwZDkwNDlmYmU3OCIsImlhdCI6MTc3NjgwMjkxNiwiZXhwIjoyMDkyMTYyOTE2fQ.deCyR50AtJKF2n1_rt_Dx0mcx4wtYoe5d5wLO_neTxM"
-
-        cmd = [
-            "curl.exe", "-s",
-            "-X", method,
-            "-H", f"Authorization: Bearer {HA_TOKEN}",
-            "-H", "Content-Type: application/json",
-        ]
-
-        if data:
-            cmd += ["-d", json.dumps(data)]
-
-        cmd.append(f"{HA_URL}{endpoint}")
-
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        if result.stdout:
-            return json.loads(result.stdout)
-        return None
-
-    def plug_on(entity_id):
-        try:
-            ha_call("POST", "/api/services/switch/turn_on",
-                    {"entity_id": entity_id})
-        except Exception as e:
-            print(f"  WARNING: plug_on failed — {e}")
-
-    def plug_off(entity_id):
-        try:
-            ha_call("POST", "/api/services/switch/turn_off",
-                    {"entity_id": entity_id})
-        except Exception as e:
-            print(f"  WARNING: plug_off failed — {e}")`
 
     # make sure all plugs start off
     print("Turning all plugs off...")
@@ -279,6 +311,7 @@ def interactive_mode(model, scaler, feature_cols, label_cols):
     before           = None
     waiting_since    = 0
     chosen_appliance = None
+    chosen_entity    = None
 
     event_flag = threading.Event()
 
@@ -290,79 +323,71 @@ def interactive_mode(model, scaler, feature_cols, label_cols):
     t = threading.Thread(target=listen, daemon=True)
     t.start()
 
-    with nidaqmx.Task() as task:
-        task.ai_channels.add_ai_voltage_chan(
-            CHANNEL,
-            terminal_config=TerminalConfiguration.DIFF,
-            min_val=0.0, max_val=5.0,
-        )
-        task.timing.cfg_samp_clk_timing(
-            rate=SAMPLE_RATE,
-            sample_mode=AcquisitionType.CONTINUOUS,
-            samps_per_chan=BUFFER_SIZE * 10,
-        )
+    daq        = DAQClient(DAQ_HOST, DAQ_PORT)
+    start_time = time.time()
 
-        start_time = time.time()
-        try:
-            while True:
-                samples    = np.array(task.read(
-                    number_of_samples_per_channel=BUFFER_SIZE))
-                buffer     = np.concatenate([buffer, samples])
-                buffer     = buffer[-BUFFER_SAMPLES:]
-                n_samples += len(samples)
+    try:
+        while True:
+            samples    = daq.read(BUFFER_SIZE)
+            buffer     = np.concatenate([buffer, samples])
+            buffer     = buffer[-BUFFER_SAMPLES:]
+            n_samples += len(samples)
 
-                if event_flag.is_set():
-                    event_flag.clear()
-                    time.sleep(0.05)
+            if event_flag.is_set():
+                event_flag.clear()
+                time.sleep(0.05)
 
-                    if len(buffer) < WINDOW_SIZE * 2:
-                        print("  Not enough data yet...")
-                        continue
+                if len(buffer) < WINDOW_SIZE * 2:
+                    print("  Not enough data yet...")
+                    continue
 
-                    # snapshot before
-                    before        = buffer[-WINDOW_SIZE:].copy()
-                    waiting_since = n_samples
+                # snapshot before at moment of keypress
+                before        = buffer[-WINDOW_SIZE:].copy()
+                waiting_since = n_samples
 
-                    # randomly pick and turn on an appliance
-                    chosen_appliance, chosen_entity = random.choice(list(PLUGS.items()))
-                    plug_on(chosen_entity)
-                    print(f"  Turned on: [HIDDEN] — collecting post-event data...")
-                    collecting_after = True
+                # randomly pick and turn on an appliance
+                chosen_appliance, chosen_entity = random.choice(list(PLUGS.items()))
+                plug_on(chosen_entity)
+                print(f"  Turned on: [HIDDEN] — collecting post-event data...")
+                collecting_after = True
 
-                if collecting_after and (n_samples - waiting_since) >= WINDOW_SIZE:
-                    after            = buffer[-WINDOW_SIZE:].copy()
-                    collecting_after = False
+            if collecting_after and (n_samples - waiting_since) >= WINDOW_SIZE:
+                after            = buffer[-WINDOW_SIZE:].copy()
+                collecting_after = False
 
-                    elapsed    = time.time() - start_time
-                    mean_delta = after.mean() - before.mean()
-                    std_delta  = after.std()  - before.std()
+                elapsed    = time.time() - start_time
+                mean_delta = after.mean() - before.mean()
+                std_delta  = after.std()  - before.std()
 
-                    print(f"  before mean: {before.mean():.4f}V  "
-                          f"after mean: {after.mean():.4f}V")
-                    print(f"  mean_delta: {mean_delta*1000:+.2f}mV")
-                    print(f"  std_delta:  {std_delta*1000:+.2f}mV")
+                print(f"  before mean: {before.mean():.4f}V  "
+                      f"after mean: {after.mean():.4f}V")
+                print(f"  mean_delta: {mean_delta*1000:+.2f}mV")
+                print(f"  std_delta:  {std_delta*1000:+.2f}mV")
 
-                    if abs(mean_delta) < 0.005 and abs(std_delta) < 0.002:
-                        print("  Delta too small — no significant event detected")
-                    else:
-                        state = predict_state(
-                            before, after, model, scaler, feature_cols, label_cols
-                        )
-                        print(format_prediction(state, elapsed))
+                if abs(mean_delta) < 0.005 and abs(std_delta) < 0.002:
+                    print("  Delta too small — no significant event detected")
+                else:
+                    state = predict_state(
+                        before, after, model, scaler, feature_cols, label_cols
+                    )
+                    print(format_prediction(state, elapsed))
 
-                    # reveal ground truth
-                    print(f"\n  *** Ground truth: {chosen_appliance} ***\n")
+                # reveal ground truth
+                print(f"\n  *** Ground truth: {chosen_appliance} ***\n")
 
-                    # turn it back off after 5 seconds
-                    time.sleep(5)
-                    plug_off(chosen_entity)
-                    print(f"  Turned off {chosen_appliance}. Press Enter for next trial.")
+                # turn off after 5 seconds
+                time.sleep(5)
+                plug_off(chosen_entity)
+                print(f"  Turned off {chosen_appliance}. Press Enter for next trial.")
 
-        except KeyboardInterrupt:
-            print("\nTurning all plugs off...")
-            for entity_id in PLUGS.values():
-                plug_off(entity_id)
-            print("Stopped.")
+    except KeyboardInterrupt:
+        print("\nTurning all plugs off...")
+        for entity_id in PLUGS.values():
+            plug_off(entity_id)
+        print("Stopped.")
+    finally:
+        daq.close()
+
 # ---------------------------------------------------------------
 # Auto mode
 # ---------------------------------------------------------------
@@ -378,38 +403,29 @@ def auto_mode(model, scaler, feature_cols, label_cols):
     n_samples  = 0
     start_time = time.time()
 
-    with nidaqmx.Task() as task:
-        task.ai_channels.add_ai_voltage_chan(
-            CHANNEL,
-            terminal_config=TerminalConfiguration.DIFF,
-            min_val=0.0, max_val=5.0,
-        )
-        task.timing.cfg_samp_clk_timing(
-            rate=SAMPLE_RATE,
-            sample_mode=AcquisitionType.CONTINUOUS,
-            samps_per_chan=BUFFER_SIZE * 10,
-        )
+    daq = DAQClient(DAQ_HOST, DAQ_PORT)
 
-        try:
-            while True:
-                samples    = np.array(task.read(
-                    number_of_samples_per_channel=BUFFER_SIZE))
-                buffer     = np.concatenate([buffer, samples])
-                buffer     = buffer[-BUFFER_SAMPLES:]
-                n_samples += len(samples)
+    try:
+        while True:
+            samples    = daq.read(BUFFER_SIZE)
+            buffer     = np.concatenate([buffer, samples])
+            buffer     = buffer[-BUFFER_SAMPLES:]
+            n_samples += len(samples)
 
-                elapsed = time.time() - start_time
-
-                triggered, before, after = detector.check(buffer, n_samples)
-                if triggered:
-                    state = predict_state(
-                        before, after, model, scaler, feature_cols, label_cols
-                    )
-                    print(format_prediction(state, elapsed))
-
-        except KeyboardInterrupt:
             elapsed = time.time() - start_time
-            print(f"\nStopped after {elapsed:.1f}s")
+
+            triggered, before, after = detector.check(buffer, n_samples)
+            if triggered:
+                state = predict_state(
+                    before, after, model, scaler, feature_cols, label_cols
+                )
+                print(format_prediction(state, elapsed))
+
+    except KeyboardInterrupt:
+        elapsed = time.time() - start_time
+        print(f"\nStopped after {elapsed:.1f}s")
+    finally:
+        daq.close()
 
 # ---------------------------------------------------------------
 # Main
