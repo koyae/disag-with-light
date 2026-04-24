@@ -374,7 +374,11 @@ def interactive_mode(model, scaler, feature_cols, label_cols):
 
                 # reveal ground truth
                 print(f"\n  *** Ground truth: {chosen_appliance} ***\n")
-                plot_detection_window()
+                state = predict_state(
+                                    before, after, model, scaler, feature_cols, label_cols
+                                )
+                #print(format_prediction(state.copy(), elapsed))
+                plot_detection_window(before, after, state.copy(), elapsed, SAMPLE_RATE)
 
                 # turn off after 5 seconds
                 time.sleep(5)
