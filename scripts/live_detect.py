@@ -229,26 +229,43 @@ def interactive_mode(model, scaler, feature_cols, label_cols):
     "fridge":       "switch.maus04_lumi_lumi_plug",
     }
 
-    import requests
-    import random
+    import subprocess
+    import json
+
+    def ha_call(method, endpoint, data=None):
+        HA_URL   = "http://169.254.204.2:8123"
+        HA_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI4YmZmNjJkNDA3ZDg0OGMzYWNlOWQwZDkwNDlmYmU3OCIsImlhdCI6MTc3NjgwMjkxNiwiZXhwIjoyMDkyMTYyOTE2fQ.deCyR50AtJKF2n1_rt_Dx0mcx4wtYoe5d5wLO_neTxM"
+
+        cmd = [
+            "curl.exe", "-s",
+            "-X", method,
+            "-H", f"Authorization: Bearer {HA_TOKEN}",
+            "-H", "Content-Type: application/json",
+        ]
+
+        if data:
+            cmd += ["-d", json.dumps(data)]
+
+        cmd.append(f"{HA_URL}{endpoint}")
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.stdout:
+            return json.loads(result.stdout)
+        return None
 
     def plug_on(entity_id):
-        requests.post(
-            f"{HA_URL}/api/services/switch/turn_on",
-            headers=HA_HEADERS,
-            json={"entity_id": entity_id},
-        )
+        try:
+            ha_call("POST", "/api/services/switch/turn_on",
+                    {"entity_id": entity_id})
+        except Exception as e:
+            print(f"  WARNING: plug_on failed — {e}")
 
     def plug_off(entity_id):
         try:
-            requests.post(
-                f"{HA_URL}/api/services/switch/turn_off",
-                headers=HA_HEADERS,
-                json={"entity_id": entity_id},
-                timeout=5,
-            )
-        except requests.exceptions.RequestException as e:
-            print(f"  WARNING: plug_off failed — {e}")
+            ha_call("POST", "/api/services/switch/turn_off",
+                    {"entity_id": entity_id})
+        except Exception as e:
+            print(f"  WARNING: plug_off failed — {e}")`
 
     # make sure all plugs start off
     print("Turning all plugs off...")
