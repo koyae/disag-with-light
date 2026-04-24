@@ -374,6 +374,7 @@ def interactive_mode(model, scaler, feature_cols, label_cols):
 
                 # reveal ground truth
                 print(f"\n  *** Ground truth: {chosen_appliance} ***\n")
+                plot_detection_window()
 
                 # turn off after 5 seconds
                 time.sleep(5)
@@ -426,6 +427,77 @@ def auto_mode(model, scaler, feature_cols, label_cols):
         print(f"\nStopped after {elapsed:.1f}s")
     finally:
         daq.close()
+
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from scipy.signal import welch as scipy_welch
+
+def plot_detection_window(before, after, state, elapsed, sr):
+    fig = plt.figure(figsize=(14, 8))
+    fig.suptitle(f"Detection window at t={elapsed:.2f}s", fontsize=11)
+    gs  = gridspec.GridSpec(2, 2, figure=fig)
+
+    # full window (before + after)
+    ax1 = fig.add_subplot(gs[0, :])
+    t_before = np.linspace(-WINDOW_S, 0,        len(before))
+    t_after  = np.linspace(0,          WINDOW_S, len(after))
+    ax1.plot(t_before, before, lw=0.5, color="steelblue",  label="before")
+    ax1.plot(t_after,  after,  lw=0.5, color="darkorange", label="after")
+    ax1.axvline(0, color="red", lw=1.5, linestyle="--", label="event")
+    ax1.axhline(before.mean(), color="steelblue",  lw=0.8,
+                linestyle=":", alpha=0.7, label=f"before mean: {before.mean():.4f}V")
+    ax1.axhline(after.mean(),  color="darkorange", lw=0.8,
+                linestyle=":", alpha=0.7, label=f"after mean:  {after.mean():.4f}V")
+    ax1.set_xlabel("Time relative to event (s)")
+    ax1.set_ylabel("Voltage (V)")
+    ax1.set_title(f"Signal window  —  Δmean: {(after.mean()-before.mean())*1000:+.2f}mV  "
+                  f"Δstd: {(after.std()-before.std())*1000:+.2f}mV")
+    ax1.legend(fontsize=8)
+    ax1.grid(True, alpha=0.3)
+
+    # FFT before vs after
+    ax2 = fig.add_subplot(gs[1, 0])
+    freqs_b, psd_b = scipy_welch(before - before.mean(), fs=sr,
+                                  nperseg=min(len(before), 1024))
+    freqs_a, psd_a = scipy_welch(after  - after.mean(),  fs=sr,
+                                  nperseg=min(len(after),  1024))
+    ax2.semilogy(freqs_b, psd_b, lw=0.8, color="steelblue",  alpha=0.8, label="before")
+    ax2.semilogy(freqs_a, psd_a, lw=0.8, color="darkorange", alpha=0.8, label="after")
+    ax2.axvline(120, color="gray", lw=0.8, linestyle="--", alpha=0.5, label="120 Hz")
+    ax2.set_xlim(0, 500)
+    ax2.set_xlabel("Frequency (Hz)")
+    ax2.set_ylabel("Power")
+    ax2.set_title("Frequency spectrum")
+    ax2.legend(fontsize=8)
+    ax2.grid(True, alpha=0.3)
+
+    # prediction bar chart
+    ax3 = fig.add_subplot(gs[1, 1])
+    no_change   = state.pop("no_change", None)
+    sorted_state = sorted(state.items(),
+                          key=lambda x: x[1]["prob"], reverse=True)
+    appliances  = [a for a, _ in sorted_state]
+    probs       = [info["prob"] for _, info in sorted_state]
+    colors      = ["green" if info["on"] else "steelblue"
+                   for _, info in sorted_state]
+    bars = ax3.barh(appliances, probs, color=colors, alpha=0.8)
+    ax3.set_xlim(0, 1.0)
+    ax3.axvline(0.5, color="red", lw=0.8, linestyle="--", alpha=0.5)
+    ax3.set_xlabel("Probability")
+    ax3.set_title("Model prediction\n(green = predicted ON)")
+    for bar, prob in zip(bars, probs):
+        ax3.text(min(prob + 0.02, 0.95), bar.get_y() + bar.get_height() / 2,
+                 f"{prob:.2f}", va="center", fontsize=8)
+    if no_change:
+        ax3.set_title(
+            f"Model prediction  —  no_change: {no_change['prob']:.2f}\n"
+            f"(green = predicted ON)"
+        )
+    ax3.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show(block=False)
+    plt.pause(0.1)
 
 # ---------------------------------------------------------------
 # Main
