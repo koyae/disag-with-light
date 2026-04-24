@@ -69,6 +69,10 @@ def extract_features(before, after, sr):
 def load_dataset():
     rows = []
 
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR   = os.path.join(SCRIPT_DIR, "..", "data")
+    MODEL_DIR  = os.path.join(SCRIPT_DIR, "..", "models")
+
     light_files = glob.glob(os.path.join(DATA_DIR, "light_*.csv"))
     exclude_path = os.path.join(DATA_DIR, "exclude.txt")
     excluded = set()

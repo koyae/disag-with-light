@@ -240,11 +240,15 @@ def interactive_mode(model, scaler, feature_cols, label_cols):
         )
 
     def plug_off(entity_id):
+        try:
         requests.post(
             f"{HA_URL}/api/services/switch/turn_off",
             headers=HA_HEADERS,
             json={"entity_id": entity_id},
+            timeout=5,
         )
+        except requests.exceptions.RequestException as e:
+            print(f"  WARNING: plug_off failed — {e}")
 
     # make sure all plugs start off
     print("Turning all plugs off...")
