@@ -1,0 +1,49 @@
+{
+    "lamp": {
+        "name": "Clamp lamp",
+        "description": "White metal lamp with an adjustable neck and a clamping foot. Primary lamp used for illuminating sensor",
+        "wattage": [60],
+        "voltage": 120,
+        "amperage": 0.5,
+        "brand": "unknown",
+        "model": "unknown",
+        "issue_no": "BJ-36,432"
+    },
+    "fridge": {
+        "name": "ESTP fridge",
+        "description": "Mini refrigerator from the ESTP program lounge",
+        "wattage": 92,
+        "amperage": 0.8,
+        "voltage": 115,
+        "brand": "Igloo",
+        "model": "FR320I",
+        "load_types": ["nonlinear"]
+    },
+    "space_heater": {
+        "name": "ESTP space heater",
+        "description": "Space heater with oscillating fan from ESTP program lounge",
+        "wattage": 1500,
+        "amperage": 12.5,
+        "voltage": 120,
+        "brand": "HomeBasiX",
+        "model": "HW-218",
+        "serial number": "FH-20A 988-0659",
+        "load_types": ["resistive","reactive"]
+    },
+    "kettle": {
+        "name": "ESTP kettle",
+        "description": "Electric water kettle from ESTP program lounge",
+        "wattage": [1250, 1500],
+        "voltage": [110, 120],
+        "model": "M99S",
+        "brand": "Müeller",
+        "load_types": ["resistive"]
+    },
+    "sls": {
+        "name": "Surface Laptop",
+        "description": "Patrick's Surface Laptop Studio (1st gen)",
+        "wattage": [60, 95, 102],
+        "brand": "Microsoft",
+        "model": "1964 i7"
+    }
+}

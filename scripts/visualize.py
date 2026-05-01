@@ -165,6 +165,18 @@ ax4.set_xlim(window_times[0], window_times[-1])
 plt.subplots_adjust(hspace=0.5, top=0.88, bottom=0.05, left=0.08, right=0.92)
 
 if args.output_path:
+    # Make sure there's no existing file in the way:
+
+    while os.path.exists(args.output_path):
+        print(f"Warning: file {args.output_path} already exists and may be overwritten.")
+        reply = input("Overwrite? (y/n) ")
+        if reply.lower() != 'y':
+            reply = input("Enter new output path (or 'cancel' to exit): ")
+            if reply.lower() == 'cancel':
+                print("Aborting save.")
+                sys.exit(0)
+            else:
+                args.output_path = reply
     print(f"Saving figure to {args.output_path}")
     plt.savefig(args.output_path)
 

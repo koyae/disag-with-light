@@ -1,0 +1,12 @@
+{
+    "estp_west_tv": {
+        "description": "Outlet on door side of ESTP program lounge, behind television",
+        "sockets": ["U","L"],
+        "phase": "unknown"
+    },
+    "estp_fridge_nook": {
+        "description": "ESTP program lounge behind mini-fridge",
+        "sockets": ["U","L"],
+        "phase": "unknown"
+    }
+}

@@ -1,7 +1,9 @@
 # scripts/auto_collect.py
 import csv
+import json
 import time
 import threading
+import traceback
 import requests
 from datetime import datetime
 import nidaqmx
@@ -16,17 +18,35 @@ parser = argparse.ArgumentParser(description=
     "Automatically collect data from MyDAQ using smart plugs and dumb devices."
 )
 
-parser.add_argument("appliance_config",type=str)
+lightbulb_types = {
+    "i": "incandescent",
+    "l": "led",
+    "c": "cfl"
+}
+
+# parser.add_argument("appliance_config",type=str)
+parser.add_argument("--lightbulb-type","--bulb-type","--bulb","--lightbulb", choices=list(lightbulb_types.values())+list(lightbulb_types.keys()), default="incandescent", type=str, required=True)
+parser.add_argument("--lightbulb-distance","--distance", choices=["close", "medium", "far"], default="close",
+    help="Distance from lightbulb to sensor. Affects expected voltage range and may be important for later analysis. Default is close."
+)
 parser.add_argument("--cycle-mode", choices=["sequential", "round_robin"], default="round_robin",
     help="Whether to run each appliance through all its cycles before starting the next one (sequential), or to cycle through all appliances in a round-robin fashion (round_robin). Default is round_robin."
 )
+parser.add_argument("--lamp", default="lamp", type=str, help="The name of the lamp being used to illuminate the sensor. Should appear in devices.json")
 parser.add_argument("--data-dir", default="data", help="Directory to save data files")
 parser.add_argument("--sample-rate", type=int, default=10_000, help="Sampling rate in Hz")
 parser.add_argument("--brief-desc", type=str, default=None, help="Brief description to make sample files easier to find.")
+parser.add_argument("--devices-file", type=str, default="metadata/devices.json")
+parser.add_argument("--locations-file", type=str, default="metadata/locations.json")
+parser.add_argument("--outlets-file", type=str, default="metadata/outlets.json")
+parser.add_argument("--no-show", "-q", action="store_true")
 
 parser.add_argument("--visualize-args", nargs=argparse.REMAINDER, default=[], help="Additional arguments to pass to the visualization script. Provide these last!")
 
 args = parser.parse_args()
+
+if args.lightbulb_type not in lightbulb_types.values():
+    args.lightbulb_type = lightbulb_types[args.lightbulb_type]
 
 # --- Home Assistant config ---
 HA_URL   = "http://homeassistant.local:8123"
@@ -67,6 +87,28 @@ expected_plug_numbers = set(range(len(APPLIANCES)))
 actual_plug_numbers = set(plug_number for _, (plug_number, _, _, _) in APPLIANCES.items())
 if expected_plug_numbers != actual_plug_numbers:
     print(f"WARNING: Plug numbers {actual_plug_numbers} are not sequential starting from 0.", file=sys.stderr)
+
+with open(args.devices_file) as rh:
+    device_descriptions = json.load(rh)
+experiment_desc_template = {
+    "experiment_description": "PLEASE_PROVIDE",
+    "brief_desc": args.brief_desc,
+    "sample_rate": args.sample_rate,
+    "location": "PLEASE_PROVIDE_per_locations_dot_json",
+    "lightbulb_type": None,
+    "lightbulb_distance": args.lightbulb_distance,
+    "devices": {}
+}
+for device_name in list(APPLIANCES.keys())+[args.lamp]:
+    if not device_name in device_descriptions.keys():
+        raise KeyError(f"Device '{device_name}' not found in device list {args.devices_file}")
+    else:
+        experiment_desc_template["devices"][device_name] = {
+            "description": device_descriptions[device_name],
+            "outlet": "PLEASE_PROVIDE_per_outlets_dot_json",
+            "socket_position": "U_L_LL_LR_UR_or_UL__shared_sockets_ok"
+        }
+print(f"Found descriptive entries for {len(APPLIANCES)} device(s)! (Not including lamp)")
 
 # --- DAQ config ---
 CHANNEL     = "myDAQ1/ai0"
@@ -115,10 +157,13 @@ def run_all():
     print(f"Starting automated collection in '{CYCLE_MODE}' mode...")
     print(f"Total estimated time: {total:.1f} minutes")
 
+    print("Ensuring all smart plugs off...")
+    time.sleep(3)
     # ensure all plugs start off
     for _, (plug_no, _, _, _) in appliance_list:
+        time.sleep(1)
         plug_off(plug_entity_ids[plug_no])
-    time.sleep(2)
+    time.sleep(3)
 
     if CYCLE_MODE == "sequential":
         for appliance_name, (plug_number, on_duration, off_duration, cycles) in appliance_list:
@@ -185,19 +230,8 @@ def run_all():
 
 # --- Main ---
 timestamp   = datetime.now().strftime('%Y%m%d_%H%M%S')
-lightbulb_types = {
-    "i": "incandescent",
-    "l": "led",
-    "c": "cfl"
-}
-lightbulb_type = input("What lightbulb are you using? ") # formerly known as raw_input()
-if lightbulb_type in lightbulb_types:
-    lightbulb_type = lightbulb_types[lightbulb_type]
-elif lightbulb_type in lightbulb_types.values():
-    pass
-elif any( ( lt.startswith(lightbulb_type) for lt in lightbulb_types.values() ) ):
-    lightbulb_type = [lt for lt in lightbulb_types.values() if lt.startswith(lightbulb_type)][0]
 
+experiment_desc_template["lightbulb_type"] = args.lightbulb_type
 
 replacechars = [
     ' ', '?', '/', ',', '!'
@@ -207,9 +241,56 @@ if args.brief_desc is None:
 for replaceme in replacechars:
     args.brief_desc = args.brief_desc.replace(replaceme,"_")
 
-basename = f"light_{timestamp}_{lightbulb_type}_{args.brief_desc}.csv"
-DATA_FILE   = os.path.join(DATA_DIR, basename)
-EVENTS_FILE = os.path.join(DATA_DIR, f"events_{basename[len('light_'):]}")
+essential_name = f"{timestamp}_{args.lightbulb_type}_{args.brief_desc}"
+DATA_FILE   = os.path.join(DATA_DIR, f"light_{essential_name}.csv")
+EVENTS_FILE = os.path.join(DATA_DIR, f"events_{essential_name}.csv")
+EXPERIMENT_DESC_FILE = os.path.join(DATA_DIR, f"desc_{essential_name}.json")
+OUTLETS_FILE = args.outlets_file
+LOCATIONS_FILE = args.locations_file
+
+with open(EXPERIMENT_DESC_FILE,'w') as wh:
+    json.dump(experiment_desc_template, wh, indent="\t")
+experiment_desc_done = False
+experiment_desc = None
+outlet_info = None
+print(f"Saved {EXPERIMENT_DESC_FILE}. Please fill in information before proceeding.")
+while not experiment_desc_done:
+    subprocess.run(["code.cmd","--wait",EXPERIMENT_DESC_FILE])
+    # try loading the file. If it doesn't parse, open the file again:
+    try:
+        with open(EXPERIMENT_DESC_FILE,'r') as rh:
+            experiment_desc = json.load(rh)
+        with open(OUTLETS_FILE,"r") as rh:
+            outlet_info = json.load(rh)
+        with open(LOCATIONS_FILE,"r") as rh:
+            location_info = json.load(rh)
+        assert experiment_desc["location"] in location_info.keys()
+        assert experiment_desc["lightbulb_type"] in lightbulb_types.values()
+        assert experiment_desc["lightbulb_distance"] in ["close","medium","far"]
+        for device in experiment_desc["devices"].values():
+        # Make sure each device has a valid outlet and socket_position according to sockets
+            assert device["outlet"] in outlet_info.keys()
+            # Make sure it's a valid socket for the specified outlet:
+            assert device["socket_position"] in outlet_info[device["outlet"]]["sockets"]
+    except json.decoder.JSONDecodeError as e:
+        print(f"Failed to parse file with:\n{e.msg}",file=sys.stderr)
+        abort = input("Do you wish to abort?")
+        if abort.lower() in ["y","ye","yes","yep"]:
+            print("Fair enough. Deleting file and exiting.", file=sys.stderr)
+            os.remove(EXPERIMENT_DESC_FILE)
+            exit(1)
+        else:
+            print(f"Reopening file and reloading location and socket info...",file=sys.stderr)
+            continue
+    except KeyError as e:
+        print(f"Encountered key error: {e.msg}. Please fix the appropriate file!")
+        continue
+    except AssertionError as e:
+        print(f"Validation error.")
+        traceback.print_exc()
+        print("Please fix the appropriate file!", file=sys.stderr)
+        continue
+    experiment_desc_done = True
 
 total = sum(c * (on + off) for _, on, off, c in APPLIANCES.values()) / 60
 print(f"Estimated total run time: {total:.1f} minutes")
@@ -263,6 +344,8 @@ with nidaqmx.Task() as task:
 
         print(f"Data saved to {DATA_FILE}")
         print(f"Events saved to {EVENTS_FILE}")
+        if args.visualize_args == []:
+            args.visualize_args = (["--show"] if not args.no_show else []) + ["-o", args.brief_desc]
         print("Launching visualizer...")
         subprocess.run(
             ['uv', 'run', 'python', 'scripts/visualize.py', DATA_FILE, '0', '.1'] + (args.visualize_args)
