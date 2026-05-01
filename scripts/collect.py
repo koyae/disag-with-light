@@ -1,11 +1,18 @@
 # scripts/collect.py
+import argparse
 import csv, threading, os
 from datetime import datetime
 import nidaqmx
 from nidaqmx.constants import TerminalConfiguration, AcquisitionType
 
+parser = argparse.ArgumentParser(description="Collect light sensor data with event logging.")
+parser.add_argument("sample_rate", nargs='?', type=int, default=10_000, help="Sampling rate in Hz")
+parser.add_argument("--data-dir", default="data", help="Directory to save data files")
+parser.add_argument("--visualize-args", nargs=argparse.REMAINDER, default=[], help="Additional arguments to pass to the visualization script")
+
+args = parser.parse_args()
 CHANNEL     = "myDAQ1/ai0"
-SAMPLE_RATE = 10_000
+SAMPLE_RATE = args.sample_rate
 BUFFER_SIZE = 1000
 DATA_DIR    = "data"
 
@@ -67,6 +74,9 @@ with nidaqmx.Task() as task:
         import os
         df.close()
         print(os.getcwd())
-        import subprocess 
-        subprocess.run(['uv', 'run', 'scripts/visualize.py', DATA_FILE])
+        import subprocess
+        subprocess.run(
+            ['uv', 'run', 'python', 'scripts/visualize.py', DATA_FILE, '0', '.1'] + (args.visualize_args)
+        )
         print(f"\nDone. Data saved to {DATA_FILE}")
+

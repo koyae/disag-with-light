@@ -7,7 +7,26 @@ from datetime import datetime
 import nidaqmx
 from nidaqmx.constants import TerminalConfiguration, AcquisitionType
 import os
+import sys
 import subprocess
+
+import argparse
+
+parser = argparse.ArgumentParser(description=
+    "Automatically collect data from MyDAQ using smart plugs and dumb devices."
+)
+
+parser.add_argument("appliance_config",type=str)
+parser.add_argument("--cycle-mode", choices=["sequential", "round_robin"], default="round_robin",
+    help="Whether to run each appliance through all its cycles before starting the next one (sequential), or to cycle through all appliances in a round-robin fashion (round_robin). Default is round_robin."
+)
+parser.add_argument("--data-dir", default="data", help="Directory to save data files")
+parser.add_argument("--sample-rate", type=int, default=10_000, help="Sampling rate in Hz")
+parser.add_argument("--brief-desc", type=str, default=None, help="Brief description to make sample files easier to find.")
+
+parser.add_argument("--visualize-args", nargs=argparse.REMAINDER, default=[], help="Additional arguments to pass to the visualization script. Provide these last!")
+
+args = parser.parse_args()
 
 # --- Home Assistant config ---
 HA_URL   = "http://homeassistant.local:8123"
@@ -19,19 +38,41 @@ HA_HEADERS = {
 }
 
 # --- Appliance config ---
-# Each appliance: (entity_id, on_duration_s, off_duration_s, cycles)
+# Each appliance: (plug_number, on_duration_s, off_duration_s, cycles)
 APPLIANCES = {
-    "kettle":       ("switch.lumi_lumi_plug_maus01", 5,  5, 10),
-    "fridge":       ("switch.maus02_lumi_lumi_plug",  30, 30, 10),
-    "space_heater": ("switch.maus03_lumi_lumi_plug",  5,  5, 10),
-    "computer":     ("switch.maus04_lumi_lumi_plug",  5,  5, 10),
+    "space_heater": (0,  5,  5, 10),
+    "fridge":       (1, 30,  30, 10),
+    "kettle":       (2,  5,  5, 10),
+    "sls":          (3,  30, 30, 10),
 }
+
+plug_entity_ids = [
+    "switch.lumi_lumi_plug_maus01",
+    "switch.maus02_lumi_lumi_plug",
+    "switch.maus03_lumi_lumi_plug",
+    "switch.maus04_lumi_lumi_plug"
+]
+
+# Make sure each appliance's plug number has a corresponding plug:
+for appliance_name, (plug_number, _, _, _) in APPLIANCES.items():
+    if plug_number < 0 or plug_number >= len(plug_entity_ids):
+        raise ValueError(f"Appliance '{appliance_name}' has invalid plug number {plug_number}. Must be between 0 and {len(plug_entity_ids)-1}.")
+
+# Also check for duplicate plug numbers:
+if len(set(plug_number for _, (plug_number, _, _, _) in APPLIANCES.items())) != len(APPLIANCES):
+    raise ValueError("Multiple appliances are assigned to the same plug number. Please ensure each appliance has a unique plug.")
+
+# Issue a warning if plug numbers are not sequential starting from 0 (not an error, just to avoid confusion):
+expected_plug_numbers = set(range(len(APPLIANCES)))
+actual_plug_numbers = set(plug_number for _, (plug_number, _, _, _) in APPLIANCES.items())
+if expected_plug_numbers != actual_plug_numbers:
+    print(f"WARNING: Plug numbers {actual_plug_numbers} are not sequential starting from 0.", file=sys.stderr)
 
 # --- DAQ config ---
 CHANNEL     = "myDAQ1/ai0"
-SAMPLE_RATE = 10_000
+SAMPLE_RATE = args.sample_rate
 BUFFER_SIZE = 1000
-DATA_DIR    = "data"
+DATA_DIR    = args.data_dir
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -75,12 +116,13 @@ def run_all():
     print(f"Total estimated time: {total:.1f} minutes")
 
     # ensure all plugs start off
-    for _, (entity_id, _, _, _) in appliance_list:
-        plug_off(entity_id)
+    for _, (plug_no, _, _, _) in appliance_list:
+        plug_off(plug_entity_ids[plug_no])
     time.sleep(2)
 
     if CYCLE_MODE == "sequential":
-        for appliance_name, (entity_id, on_duration, off_duration, cycles) in appliance_list:
+        for appliance_name, (plug_number, on_duration, off_duration, cycles) in appliance_list:
+            entity_id = plug_entity_ids[plug_number]
             print(f"\n{'='*50}")
             print(f"Starting {appliance_name} — {cycles} cycles")
             print(f"  ON: {on_duration}s  OFF: {off_duration}s")
@@ -112,7 +154,8 @@ def run_all():
 
         for cycle in range(max_cycles):
             print(f"\n--- Round {cycle + 1}/{max_cycles} ---")
-            for appliance_name, (entity_id, on_duration, off_duration, cycles) in appliance_list:
+            for appliance_name, (plug_no, on_duration, off_duration, cycles) in appliance_list:
+                entity_id = plug_entity_ids[plug_no]
                 if cycle >= cycles:
                     print(f"  [{appliance_name}] skipping — done")
                     continue
@@ -134,17 +177,39 @@ def run_all():
                 time.sleep(off_duration)
 
     print("\nTurning all plugs off...")
-    for _, (entity_id, _, _, _) in appliance_list:
-        plug_off(entity_id)
+    for _, (plug_no, _, _, _) in appliance_list:
+        plug_off(plug_entity_ids[plug_no])
 
     print("\nAll done! All plugs off.")
     collection_done = True
 
 # --- Main ---
 timestamp   = datetime.now().strftime('%Y%m%d_%H%M%S')
-lightbulb_type = raw("What lightbulb are you using? ")
-DATA_FILE   = os.path.join(DATA_DIR, f"light_{timestamp}_{lightbulb_type}.csv")
-EVENTS_FILE = os.path.join(DATA_DIR, f"events_{timestamp}_{lightbulb_type}.csv")
+lightbulb_types = {
+    "i": "incandescent",
+    "l": "led",
+    "c": "cfl"
+}
+lightbulb_type = input("What lightbulb are you using? ") # formerly known as raw_input()
+if lightbulb_type in lightbulb_types:
+    lightbulb_type = lightbulb_types[lightbulb_type]
+elif lightbulb_type in lightbulb_types.values():
+    pass
+elif any( ( lt.startswith(lightbulb_type) for lt in lightbulb_types.values() ) ):
+    lightbulb_type = [lt for lt in lightbulb_types.values() if lt.startswith(lightbulb_type)][0]
+
+
+replacechars = [
+    ' ', '?', '/', ',', '!'
+]
+if args.brief_desc is None:
+    args.brief_desc = input("Brief experiment description or nickname? ") # formerly known as raw_input()
+for replaceme in replacechars:
+    args.brief_desc = args.brief_desc.replace(replaceme,"_")
+
+basename = f"light_{timestamp}_{lightbulb_type}_{args.brief_desc}.csv"
+DATA_FILE   = os.path.join(DATA_DIR, basename)
+EVENTS_FILE = os.path.join(DATA_DIR, f"events_{basename[len('light_'):]}")
 
 total = sum(c * (on + off) for _, on, off, c in APPLIANCES.values()) / 60
 print(f"Estimated total run time: {total:.1f} minutes")
@@ -194,11 +259,11 @@ with nidaqmx.Task() as task:
         except KeyboardInterrupt:
             print(f"\nStopped early. Turning all plugs off...")
             for entity_id, _, _, _ in APPLIANCES.values():
-                plug_off(entity_id)
+                plug_off(plug_entity_ids[entity_id])
 
         print(f"Data saved to {DATA_FILE}")
         print(f"Events saved to {EVENTS_FILE}")
         print("Launching visualizer...")
-        subprocess.Popen([
-            "uv", "run", "python", "scripts/visualize.py", DATA_FILE
-        ])
+        subprocess.run(
+            ['uv', 'run', 'python', 'scripts/visualize.py', DATA_FILE, '0', '.1'] + (args.visualize_args)
+        )

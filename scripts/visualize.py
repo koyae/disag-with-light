@@ -5,21 +5,48 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-if len(sys.argv) < 2:
-    print("Usage: python scripts/visualize.py <data/csv_file> [zoom_start_s] [zoom_end_s]")
-    sys.exit(1)
+import argparse
 
-csv_path = sys.argv[1]
+parser = argparse.ArgumentParser(description="Visualize light sensor data with optional zoom.")
+parser.add_argument("csv_file", help="Path to the CSV file containing the data.")
+parser.add_argument("zoom_start", nargs='?', type=float, default=0.0, help="Start time (in seconds) for zoomed view.")
+parser.add_argument("zoom_end", nargs='?', type=float, default=None, help="End time (in seconds) for zoomed view. If not provided, defaults to zoom_start + 0.1s.")
+parser.add_argument("--voltage-bounds", nargs=2, type=float, default=[None,None], help="Minimum and maximum voltage for y-axis in first plot.")
+parser.add_argument("--show", default=None, action="store_true", help="If set, call plt.show() at the end (use if you want to save a figure and also show it).")
+parser.add_argument("--output-path","-o", default=None, help="If provided, save the figure to this path and display nothing unless --show is specified.")
+args = parser.parse_args()
+
+if args.zoom_end is None:
+    args.zoom_end = args.zoom_start + 0.1
+
+if args.output_path is not None:
+
+    if os.path.sep not in args.output_path:
+        args.output_path = os.path.join("visualizations",args.output_path)
+
+    if '.' not in args.output_path:
+        args.output_path += '.png'
+
+
+csv_path = args.csv_file
+data_dir    = os.path.dirname(csv_path)
+basename    = os.path.basename(csv_path)
 df = pd.read_csv(csv_path)
+if "voltage_V" not in df.columns and "events_" in basename:
+    # if we were given an events file instead of a sample file:
+    csv_path = os.path.join(data_dir, basename.replace("events_","light_"))
+    data_dir, basename = os.path.split(csv_path)
+    basename = os.path.basename(basename)
+    print(f"Events file provided. Attempting to load data file {csv_path}")
+    df = pd.read_csv(csv_path)
+
 t = df["elapsed_s"].values
 v = df["voltage_V"].values
 sample_rate = round(1 / (t[1] - t[0]))
 
-zoom_start = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
-zoom_end   = float(sys.argv[3]) if len(sys.argv) > 3 else zoom_start + 0.1
+zoom_start = args.zoom_start
+zoom_end   = args.zoom_end
 
-data_dir    = os.path.dirname(csv_path)
-basename    = os.path.basename(csv_path)
 events_file = os.path.join(data_dir, basename.replace("light_", "events_"))
 
 events = None
@@ -59,7 +86,7 @@ spect_plot = spect_db[freq_mask, :]
 # --- plot ---
 fig, axes = plt.subplots(3, 1, figsize=(14, 14),
                          gridspec_kw={"height_ratios": [1.5, 1.5, 2]})
-fig.suptitle(basename, fontsize=11, y=0.95)
+fig.suptitle(f"{basename} ({sample_rate:,.0f} Hz)", fontsize=11, y=0.95)
 
 def draw_events(ax, events, ymin, ymax):
     if events is None:
@@ -77,6 +104,7 @@ ax1.axvspan(zoom_start, zoom_end, color="orange", alpha=0.25, label="zoom region
 draw_events(ax1, events, v.min(), v.max())
 ax1.set_xlabel("Time (s)")
 ax1.set_ylabel("Voltage (V)")
+ax1.set_ylim(args.voltage_bounds[0], args.voltage_bounds[1])
 ax1.set_title("Full recording")
 ax1.legend(fontsize=8)
 ax1.grid(True, alpha=0.3)
@@ -135,4 +163,12 @@ ax4.set_title("Spectrogram — brighter = more energy")
 ax4.set_xlim(window_times[0], window_times[-1])
 
 plt.subplots_adjust(hspace=0.5, top=0.88, bottom=0.05, left=0.08, right=0.92)
-plt.show()
+
+if args.output_path:
+    print(f"Saving figure to {args.output_path}")
+    plt.savefig(args.output_path)
+
+if args.show or (
+    args.show is None and args.output_path is None
+):
+    plt.show()
