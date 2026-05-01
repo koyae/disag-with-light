@@ -2,9 +2,9 @@
     "lamp": {
         "name": "Clamp lamp",
         "description": "White metal lamp with an adjustable neck and a clamping foot. Primary lamp used for illuminating sensor",
-        "wattage": [60],
+        "wattage": [60,13],
         "voltage": 120,
-        "amperage": 0.5,
+        "amperage": [0.5,0.2],
         "brand": "unknown",
         "model": "unknown",
         "issue_no": "BJ-36,432"
