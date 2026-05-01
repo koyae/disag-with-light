@@ -177,6 +177,8 @@ if args.output_path:
                 sys.exit(0)
             else:
                 args.output_path = reply
+        else:
+            break
     print(f"Saving figure to {args.output_path}")
     plt.savefig(args.output_path)
 
