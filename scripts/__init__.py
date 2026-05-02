@@ -156,11 +156,17 @@ class NILMDataset(Dataset):
 
         # 2. Replay the events to fill the state matrix
         current_state = {dev: 0 for dev in target_devices}
+
         # Keep track of when a device entered an uncertain "on" transition
         uncertain_until = {dev: 0.0 for dev in target_devices}
         UNCERTAINTY_WINDOW = 30.0 # seconds
 
+        # INITIALIZE THESE BEFORE THE LOOP!
+        event_idx = 0
+        num_events = len(events_df)
+
         for i, elapsed_s in enumerate(voltage_df['elapsed_s'].values):
+            # Check if we've passed the timestamp of the next event
             while event_idx < num_events and elapsed_s >= events_df.iloc[event_idx]['elapsed_s']:
                 event_str = events_df.iloc[event_idx]['label']
                 event_time = events_df.iloc[event_idx]['elapsed_s']
@@ -172,7 +178,7 @@ class NILMDataset(Dataset):
                             current_state[dev] = -1.0 # -1 means "Ignore/Uncertain"
                             uncertain_until[dev] = event_time + UNCERTAINTY_WINDOW
                         elif "_off" in event_str:
-                            # Assuming off events are instantaneous. If not, apply the same logic!
+                            # Assuming off events are instantaneous.
                             current_state[dev] = 0.0
                             uncertain_until[dev] = 0.0
                 event_idx += 1
@@ -186,27 +192,24 @@ class NILMDataset(Dataset):
             for dev_idx, dev in enumerate(target_devices):
                 self.state_matrix[i, dev_idx] = current_state[dev]
 
-        # Assuming events_df is sorted by elapsed_s
-        event_idx = 0
-        num_events = len(events_df)
+    def __len__(self):
+        # Number of sliding windows we can extract
+        return len(self.voltage) - self.window_size
 
-        for i, elapsed_s in enumerate(voltage_df['elapsed_s'].values):
-            # Check if we've passed the timestamp of the next event
-            while event_idx < num_events and elapsed_s >= events_df.iloc[event_idx]['elapsed_s']:
-                event_str = events_df.iloc[event_idx]['label']
+    def __getitem__(self, idx):
+        # Extract a window of voltage data
+        x = self.voltage[idx : idx + self.window_size]
 
-                # Parse "device_on" or "device_off"
-                for dev_idx, dev in enumerate(target_devices):
-                    if dev in event_str:
-                        if "_on" in event_str:
-                            current_state[dev] = 1.0
-                        elif "_off" in event_str:
-                            current_state[dev] = 0.0
-                event_idx += 1
+        # Get the labels for this window.
+        # (Usually, we take the state at the end of the window, or the mode)
+        y = self.state_matrix[idx + self.window_size - 1]
 
-            # Record the current state for this sample
-            for dev_idx, dev in enumerate(target_devices):
-                self.state_matrix[i, dev_idx] = current_state[dev]
+        # Convert to PyTorch tensors
+        # LSTM expects shape: (Sequence Length, Number of Features)
+        x_tensor = torch.tensor(x, dtype=torch.float32).unsqueeze(-1)
+        y_tensor = torch.tensor(y, dtype=torch.float32)
+
+        return x_tensor, y_tensor
 
     def __len__(self):
         # Number of sliding windows we can extract
