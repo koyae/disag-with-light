@@ -2,13 +2,23 @@ import csv
 import json
 
 import torch
-
 from torch.utils.data import Dataset
 
 import numpy as np
 import os
 import pandas as pd
 import pprint
+
+import yaml
+
+def save_yaml(config: dict, path: str):
+    with open(path, 'w') as f:
+        yaml.dump(config, f, sort_keys=False, default_flow_style=None)
+
+
+def load_yaml(path: str):
+    with open(path, 'r') as f:
+        return yaml.load(f, Loader=yaml.FullLoader)
 
 
 def get_sample_rate(file_name):
@@ -147,30 +157,76 @@ def get_target_devices(desc_json_path, exclude_load_types=None):
 
 
 class FastNILMDataset(Dataset):
-    def __init__(self, npz_path, window_size=200):
-        # np.load reads compiled binary instantly
+    # Class-level accumulators
+    _global_sum = 0.0
+    _global_sum_sq = 0.0
+    _global_count = 0
+
+    # Finalized stats
+    global_mean = 0.0
+    global_std = 1.0
+    _stats_finalized = False
+
+    def __init__(self, npz_path, window_size=200, build_stats=False):
         data = np.load(npz_path)
         self.voltage = data['voltage']
         self.state_matrix = data['states']
         self.window_size = window_size
 
-        self.v_mean = np.mean(self.voltage)
-        self.v_std = np.std(self.voltage)
+        # Only accumulate stats from the training files
+        if build_stats:
+            FastNILMDataset._global_sum += np.sum(self.voltage)
+            FastNILMDataset._global_sum_sq += np.sum(self.voltage ** 2)
+            FastNILMDataset._global_count += len(self.voltage)
+            # Un-finalize in case we are accumulating across multiple notebook cells
+            FastNILMDataset._stats_finalized = False
 
-        # Watch for 0:
-        self.v_std = self.v_std if self.v_std else 1
+    @classmethod
+    def finalize_global_stats(cls):
+        """Calculates the final mean and std from the accumulated totals."""
+        if cls._stats_finalized == True:
+            raise Exception("Stats were already finalized! You must reset them before trying again!")
+
+        if cls._global_count == 0:
+            print("Warning: No data accumulated. Defaulting to mean=0, std=1.")
+            cls.global_mean = 0.0
+            cls.global_std = 1.0
+        else:
+            cls.global_mean = cls._global_sum / cls._global_count
+            # Variance = E[X^2] - (E[X])^2
+            variance = (cls._global_sum_sq / cls._global_count) - (cls.global_mean ** 2)
+
+            # Use max(variance, 0) to catch floating point rounding errors near zero
+            cls.global_std = np.sqrt(max(variance, 0.0))
+            if cls.global_std == 0:
+                print("Warning: Global standard deviation is 0. Using 1 instead.")
+                cls.global_std = 1.0
+
+        cls._stats_finalized = True
+        print(f"[*] Global Stats Locked -> Mean: {cls.global_mean:.4f} | Std: {cls.global_std:.4f}")
+
+    @classmethod
+    def reset_stats(cls):
+        """Call this before a new ablation run to clear the accumulators."""
+        cls._global_sum = 0.0
+        cls._global_sum_sq = 0.0
+        cls._global_count = 0
+        cls.global_mean = 0.0
+        cls.global_std = 1.0
+        cls._stats_finalized = False
 
     def __len__(self):
-        return len(self.voltage) - self.window_size
+        return len(self.voltage) - self.window_size + 1
 
     def __getitem__(self, idx):
+        if not FastNILMDataset._stats_finalized:
+            raise RuntimeError("You must call FastNILMDataset.finalize_global_stats() before training/inference!")
+
         x = self.voltage[idx : idx + self.window_size]
         y = self.state_matrix[idx + self.window_size - 1]
 
-        # slight hack to make sure the uncertain label doesn't mess things up:
-        y = np.maximum(y, 0.0)
-
-        x_normalized = (x - self.v_mean) / self.v_std
+        # Apply the absolute global scale
+        x_normalized = (x - FastNILMDataset.global_mean) / FastNILMDataset.global_std
 
         x_tensor = torch.tensor(x_normalized, dtype=torch.float32).unsqueeze(-1)
         y_tensor = torch.tensor(y, dtype=torch.float32)
