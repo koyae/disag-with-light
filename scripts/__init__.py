@@ -15,9 +15,6 @@ def get_sample_rate(file_name):
         t1 = float(next(cr)[1])
         return round(1 / (t1 - t0))
 
-import pandas as pd
-import numpy as np
-
 def downsample_with_pandas(input_file, factor, output_file=None, chunk_size=None, chunk_duration=None, skip_seconds=0, n_seconds=None) -> None|pd.DataFrame:
     """
     Downsamples a large CSV by averaging every `factor` rows.
