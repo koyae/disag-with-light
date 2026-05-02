@@ -156,6 +156,35 @@ class NILMDataset(Dataset):
 
         # 2. Replay the events to fill the state matrix
         current_state = {dev: 0 for dev in target_devices}
+        # Keep track of when a device entered an uncertain "on" transition
+        uncertain_until = {dev: 0.0 for dev in target_devices}
+        UNCERTAINTY_WINDOW = 30.0 # seconds
+
+        for i, elapsed_s in enumerate(voltage_df['elapsed_s'].values):
+            while event_idx < num_events and elapsed_s >= events_df.iloc[event_idx]['elapsed_s']:
+                event_str = events_df.iloc[event_idx]['label']
+                event_time = events_df.iloc[event_idx]['elapsed_s']
+
+                for dev_idx, dev in enumerate(target_devices):
+                    if dev in event_str:
+                        if "_on" in event_str:
+                            # It's turning on, but we aren't sure exactly when.
+                            current_state[dev] = -1.0 # -1 means "Ignore/Uncertain"
+                            uncertain_until[dev] = event_time + UNCERTAINTY_WINDOW
+                        elif "_off" in event_str:
+                            # Assuming off events are instantaneous. If not, apply the same logic!
+                            current_state[dev] = 0.0
+                            uncertain_until[dev] = 0.0
+                event_idx += 1
+
+            # Resolve uncertainty if we've passed the 30 second window
+            for dev in target_devices:
+                if current_state[dev] == -1.0 and elapsed_s >= uncertain_until[dev]:
+                    current_state[dev] = 1.0 # Definitively ON now
+
+            # Record the state
+            for dev_idx, dev in enumerate(target_devices):
+                self.state_matrix[i, dev_idx] = current_state[dev]
 
         # Assuming events_df is sorted by elapsed_s
         event_idx = 0
