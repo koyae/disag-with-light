@@ -2,7 +2,7 @@ import csv
 import json
 
 import torch
-import torch.nn as nn
+
 from torch.utils.data import Dataset
 
 import numpy as np
@@ -146,120 +146,84 @@ def get_target_devices(desc_json_path, exclude_load_types=None):
     return target_devices
 
 
-class NILMDataset(Dataset):
-    def __init__(self, voltage_df, events_df, target_devices, window_size=500):
+class FastNILMDataset(Dataset):
+    def __init__(self, npz_path, window_size=200):
+        # np.load reads compiled binary instantly
+        data = np.load(npz_path)
+        self.voltage = data['voltage']
+        self.state_matrix = data['states']
         self.window_size = window_size
-        self.voltage = voltage_df['voltage_V'].values
 
-        # 1. Create a continuous state matrix (0s and 1s) for every voltage sample
-        self.state_matrix = np.zeros((len(voltage_df), len(target_devices)), dtype=np.float32)
+        self.v_mean = np.mean(self.voltage)
+        self.v_std = np.std(self.voltage)
 
-        # 2. Replay the events to fill the state matrix
-        current_state = {dev: 0 for dev in target_devices}
-
-        # Keep track of when a device entered an uncertain "on" transition
-        uncertain_until = {dev: 0.0 for dev in target_devices}
-        UNCERTAINTY_WINDOW = 30.0 # seconds
-
-        # INITIALIZE THESE BEFORE THE LOOP!
-        event_idx = 0
-        num_events = len(events_df)
-
-        for i, elapsed_s in enumerate(voltage_df['elapsed_s'].values):
-            # Check if we've passed the timestamp of the next event
-            while event_idx < num_events and elapsed_s >= events_df.iloc[event_idx]['elapsed_s']:
-                event_str = events_df.iloc[event_idx]['label']
-                event_time = events_df.iloc[event_idx]['elapsed_s']
-
-                for dev_idx, dev in enumerate(target_devices):
-                    if dev in event_str:
-                        if "_on" in event_str:
-                            # It's turning on, but we aren't sure exactly when.
-                            current_state[dev] = -1.0 # -1 means "Ignore/Uncertain"
-                            uncertain_until[dev] = event_time + UNCERTAINTY_WINDOW
-                        elif "_off" in event_str:
-                            # Assuming off events are instantaneous.
-                            current_state[dev] = 0.0
-                            uncertain_until[dev] = 0.0
-                event_idx += 1
-
-            # Resolve uncertainty if we've passed the 30 second window
-            for dev in target_devices:
-                if current_state[dev] == -1.0 and elapsed_s >= uncertain_until[dev]:
-                    current_state[dev] = 1.0 # Definitively ON now
-
-            # Record the state
-            for dev_idx, dev in enumerate(target_devices):
-                self.state_matrix[i, dev_idx] = current_state[dev]
+        # Watch for 0:
+        self.v_std = self.v_std if self.v_std else 1
 
     def __len__(self):
-        # Number of sliding windows we can extract
         return len(self.voltage) - self.window_size
 
     def __getitem__(self, idx):
-        # Extract a window of voltage data
         x = self.voltage[idx : idx + self.window_size]
-
-        # Get the labels for this window.
-        # (Usually, we take the state at the end of the window, or the mode)
         y = self.state_matrix[idx + self.window_size - 1]
 
-        # Convert to PyTorch tensors
-        # LSTM expects shape: (Sequence Length, Number of Features)
-        x_tensor = torch.tensor(x, dtype=torch.float32).unsqueeze(-1)
-        y_tensor = torch.tensor(y, dtype=torch.float32)
+        # slight hack to make sure the uncertain label doesn't mess things up:
+        y = np.maximum(y, 0.0)
 
-        return x_tensor, y_tensor
+        x_normalized = (x - self.v_mean) / self.v_std
 
-    def __len__(self):
-        # Number of sliding windows we can extract
-        return len(self.voltage) - self.window_size
-
-    def __getitem__(self, idx):
-        # Extract a window of voltage data
-        x = self.voltage[idx : idx + self.window_size]
-
-        # Get the labels for this window.
-        # (Usually, we take the state at the end of the window, or the mode)
-        y = self.state_matrix[idx + self.window_size - 1]
-
-        # Convert to PyTorch tensors
-        # LSTM expects shape: (Sequence Length, Number of Features)
-        x_tensor = torch.tensor(x, dtype=torch.float32).unsqueeze(-1)
+        x_tensor = torch.tensor(x_normalized, dtype=torch.float32).unsqueeze(-1)
         y_tensor = torch.tensor(y, dtype=torch.float32)
 
         return x_tensor, y_tensor
 
 
-class BaselineLSTM(nn.Module):
-    def __init__(self, input_size=1, hidden_size=64, num_layers=2, num_classes=4):
-        super(BaselineLSTM, self).__init__()
 
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
+def get_micro_dataset(cache_dir="preprocess_cache"):
+    print("[*] Scanning cache for device coverage...")
+    npz_files = [f for f in os.listdir(cache_dir) if f.endswith(".npz")]
 
-        # The LSTM layer
-        # batch_first=True means inputs should be (batch_size, sequence_length, features)
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+    file_to_devices = {}
+    all_devices_seen = set()
 
-        # A fully connected layer to map the LSTM hidden state to our device classes
-        self.fc = nn.Linear(hidden_size, num_classes)
+    # 1. Map out which devices are actually ACTIVE in each file
+    for f in npz_files:
+        filepath = os.path.join(cache_dir, f)
+        data = np.load(filepath)
 
-        # Sigmoid for multi-label classification (outputs probabilities between 0 and 1)
-        self.sigmoid = nn.Sigmoid()
+        states = data['states']
+        devices = data['devices']
 
-    def forward(self, x):
-        # Initialize hidden and cell states with zeros
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        # Sum down the time axis. If the sum > 0, the device turned ON at least once.
+        active_cols = np.where(states.sum(axis=0) > 0)[0]
+        active_devices = {devices[i] for i in active_cols}
 
-        # Forward propagate LSTM
-        out, _ = self.lstm(x, (h0, c0))
+        if active_devices:
+            file_to_devices[f] = active_devices
+            all_devices_seen.update(active_devices)
 
-        # Decode the hidden state of the LAST time step in the window
-        out = out[:, -1, :]
-        out = self.fc(out)
-        out = self.sigmoid(out)
+    print(f"[*] Found {len(all_devices_seen)} unique devices across {len(npz_files)} files.")
 
-        return out
+    # 2. Greedy Set Cover Algorithm
+    uncovered_devices = set(all_devices_seen)
+    minimum_files = []
+
+    print("\n[*] Assembling minimum file set:")
+    while uncovered_devices:
+        # Find the file that covers the highest number of currently UNCOVERED devices
+        best_file = max(
+            file_to_devices.keys(),
+            key=lambda f: len(file_to_devices[f].intersection(uncovered_devices))
+        )
+
+        # What devices are we adding with this file?
+        newly_covered = file_to_devices[best_file].intersection(uncovered_devices)
+
+        minimum_files.append(best_file)
+        uncovered_devices -= newly_covered
+
+        print(f" [+] Added {best_file} -> Covered: {list(newly_covered)}")
+
+    print(f"\n[SUCCESS] Reduced {len(npz_files)} files down to {len(minimum_files)} files!")
+    return minimum_files
 
