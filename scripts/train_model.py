@@ -1,7 +1,15 @@
 # scripts/train_model.py
+
+"""
+Performance:
+    745MB of info -> ~18s runtime
+    One file is fully loaded into memory at a time
+"""
+
 import os
 import sys
 import glob
+import argparse
 import numpy as np
 import pandas as pd
 from scipy.signal import welch
@@ -15,10 +23,11 @@ from sklearn.metrics import classification_report, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-DATA_DIR    = "data"
+DATA_DIR    = "data_e"
 SAMPLE_RATE = 10_000
-WINDOW_S    = 0.5
-WINDOW_SIZE = int(WINDOW_S * SAMPLE_RATE)
+WINDOW_S    = 0.5       # seconds before/after event to analyze
+                        # window-size as a sample-count is computed
+                        # dynamically from this value.
 TEST_SIZE   = 0.2
 RANDOM_STATE = 42
 
@@ -27,12 +36,15 @@ RANDOM_STATE = 42
 # ---------------------------------------------------------------
 
 def band_power(v, sr, low, high):
+    """ voltage-info, sampling_rate, freq band bounds -> average power in band
+   """
     freqs, psd = welch(v, fs=sr, nperseg=min(len(v), 1024))
     mask = (freqs >= low) & (freqs <= high)
     return psd[mask].mean() if mask.any() else 0.0
 
 def extract_features(before, after, sr):
     features = {}
+
 
     # time domain
     features["mean_before"]  = before.mean()
@@ -94,7 +106,12 @@ def load_dataset():
         events_path = os.path.join(DATA_DIR, basename.replace("light_", "events_"))
 
         if not os.path.exists(events_path):
+            print(f"Warning: no events file found for {basename}, skipping.",
+                  file=sys.stderr
+            )
             continue
+
+        print(f"Now processing {basename}...")
 
         df     = pd.read_csv(light_path)
         events = pd.read_csv(events_path)
@@ -102,18 +119,21 @@ def load_dataset():
         v      = df["voltage_V"].values
         sr     = round(1 / (t[1] - t[0]))
 
+        # Recompute window size based on actual sampling rate:
+        window_size = int(WINDOW_S * sr)
+
         for _, event in events.iterrows():
             label   = event["label"]
             event_t = float(event["elapsed_s"])
             idx     = np.searchsorted(t, event_t)
 
-            if idx < WINDOW_SIZE or idx + WINDOW_SIZE >= len(v):
+            if idx < window_size or idx + window_size >= len(v):
                 continue
 
-            before = v[idx - WINDOW_SIZE:idx]
-            after  = v[idx:idx + WINDOW_SIZE]
+            before = v[idx - window_size:idx]
+            after  = v[idx:idx + window_size]
 
-            features              = extract_features(before, after, sr)
+            features              = extract_features(before, after, sr, filename=light_path)
             features["label"]     = label
             features["appliance"] = label.rsplit("_", 1)[0]
             features["event"]     = label.rsplit("_", 1)[1]
@@ -126,11 +146,13 @@ def load_dataset():
 # Train and evaluate multiple classifiers
 # ---------------------------------------------------------------
 
-CLASSIFIERS = {
+CLASSIFIERS = { # models and parameters
     "Logistic Regression": LogisticRegression(max_iter=1000, random_state=RANDOM_STATE),
     "Random Forest":       RandomForestClassifier(n_estimators=100, random_state=RANDOM_STATE),
     "SVM":                 SVC(kernel="rbf", random_state=RANDOM_STATE),
     "k-NN (k=5)":          KNeighborsClassifier(n_neighbors=5),
+    # "k-NN (k=5)":          KNeighborsClassifier(n_neighbors=3),
+    # "k-NN (k=5)":          KNeighborsClassifier(n_neighbors=2),
 }
 
 def train_and_evaluate(df):
@@ -185,6 +207,53 @@ def train_and_evaluate(df):
         print(classification_report(y_test, y_pred))
 
     return results, y_test, feature_cols, scaler, X_test, df_on
+
+# ---------------------------------------------------------------
+# User interaction
+# ---------------------------------------------------------------
+
+def prompt_yes_no(question):
+    """Ask user a yes/no question and return True for yes, False for no."""
+    while True:
+        response = input(f"{question} (y/n): ").strip().lower()
+        if response in ["yes", "y"]:
+            return True
+        elif response in ["no", "n"]:
+            return False
+        else:
+            print("Please answer 'yes' or 'no'.")
+
+def parse_features_option():
+    """Parse command-line arguments for features option.
+
+    Returns True to use cached features, False to regenerate, or None to prompt.
+    """
+    parser = argparse.ArgumentParser(description="Train and evaluate appliance classifiers")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--use-cached", action="store_true",
+                       help="Use cached features.csv if available")
+    group.add_argument("--regenerate", action="store_true",
+                       help="Regenerate features from raw data")
+
+    args = parser.parse_args()
+
+    if args.use_cached:
+        return True
+    elif args.regenerate:
+        return False
+    else:
+        return None  # Prompt the user
+
+def generate_and_save_features(features_path):
+    """Load dataset and save features to disk."""
+    print("Generating new features...")
+    df = load_dataset()
+    if len(df) == 0:
+        print("No labeled events found.")
+        sys.exit(1)
+    df.to_csv(features_path, index=False)
+    print(f"Features saved to {features_path}")
+    return df
 
 # ---------------------------------------------------------------
 # Plot results
@@ -253,16 +322,24 @@ def plot_results(results, y_test, feature_cols, df_on, scaler):
 # ---------------------------------------------------------------
 
 if __name__ == "__main__":
-    print("Loading dataset...")
-    df = load_dataset()
-
-    if len(df) == 0:
-        print("No labeled events found.")
-        sys.exit(1)
-
     features_path = os.path.join(DATA_DIR, "features.csv")
-    df.to_csv(features_path, index=False)
-    print(f"Features saved to {features_path}")
+
+    # Parse command-line arguments or get interactive choice
+    use_existing = parse_features_option()
+
+    # Check if features already exist
+    if os.path.exists(features_path) and use_existing is not False:
+        # Prompt only if no command-line option provided
+        if use_existing is None:
+            use_existing = prompt_yes_no("Features file found. Use existing features.csv?")
+
+        if use_existing:
+            print(f"Loading features from {features_path}")
+            df = pd.read_csv(features_path)
+        else:
+            df = generate_and_save_features(features_path)
+    else:
+        df = generate_and_save_features(features_path)
 
     results, y_test, feature_cols, scaler, X_test, df_on = train_and_evaluate(df)
     plot_results(results, y_test, feature_cols, df_on, scaler)
