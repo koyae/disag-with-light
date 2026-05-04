@@ -155,18 +155,25 @@ CLASSIFIERS = { # models and parameters
     # "k-NN (k=5)":          KNeighborsClassifier(n_neighbors=2),
 }
 
-def train_and_evaluate(df):
+def train_and_evaluate(df, event_type="on"):
     print(f"\nDataset: {len(df)} events across {df['appliance'].nunique()} appliances")
     print(df["appliance"].value_counts().to_string())
 
-    df_on = df[df["event"] == "on"].copy()
-    print(f"\nUsing {len(df_on)} 'on' events for training/testing")
+    # Filter by event type
+    if event_type == "both":
+        df_filtered = df.copy()
+        event_label = "all events"
+    else:
+        df_filtered = df[df["event"] == event_type].copy()
+        event_label = f"'{event_type}' events"
 
-    feature_cols = [c for c in df_on.columns
+    print(f"\nUsing {len(df_filtered)} {event_label} for training/testing")
+
+    feature_cols = [c for c in df_filtered.columns
                     if c not in ["label", "appliance", "event", "file"]]
 
-    X = df_on[feature_cols].values
-    y = df_on["appliance"].values
+    X = df_filtered[feature_cols].values
+    y = df_filtered["appliance"].values
 
     scaler   = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -206,7 +213,7 @@ def train_and_evaluate(df):
         print(f"  Test accuracy: {test_acc:.3f}")
         print(classification_report(y_test, y_pred))
 
-    return results, y_test, feature_cols, scaler, X_test, df_on
+    return results, y_test, feature_cols, scaler, X_test, df_filtered
 
 # ---------------------------------------------------------------
 # User interaction
@@ -223,26 +230,38 @@ def prompt_yes_no(question):
         else:
             print("Please answer 'yes' or 'no'.")
 
-def parse_features_option():
-    """Parse command-line arguments for features option.
+def parse_options():
+    """Parse command-line arguments for features and event type options.
 
-    Returns True to use cached features, False to regenerate, or None to prompt.
+    Returns:
+        Tuple of (use_existing, event_type)
+        - use_existing: True to use cached, False to regenerate, None to prompt
+        - event_type: 'on', 'off', or 'both'
     """
     parser = argparse.ArgumentParser(description="Train and evaluate appliance classifiers")
+
+    # Features cache options
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--use-cached", action="store_true",
                        help="Use cached features.csv if available")
     group.add_argument("--regenerate", action="store_true",
                        help="Regenerate features from raw data")
 
+    # Event type option
+    parser.add_argument("--event-type", choices=["on", "off", "both"], default="on",
+                        help="Event type to train on (default: on)")
+
     args = parser.parse_args()
 
+    # Determine use_existing value
     if args.use_cached:
-        return True
+        use_existing = True
     elif args.regenerate:
-        return False
+        use_existing = False
     else:
-        return None  # Prompt the user
+        use_existing = None  # Prompt the user
+
+    return use_existing, args.event_type
 
 def generate_and_save_features(features_path):
     """Load dataset and save features to disk."""
@@ -259,12 +278,17 @@ def generate_and_save_features(features_path):
 # Plot results
 # ---------------------------------------------------------------
 
-def plot_results(results, y_test, feature_cols, df_on, scaler):
+def plot_results(results, y_test, feature_cols, df_on, scaler, event_type="on"):
+    if event_type not in ["on", "off", "both"]:
+        raise ValueError("Invalid event_type for plotting. Must be 'on', 'off', or 'both'.")
+
+    event_label = f"'{event_type}'" if event_type != "both" else "'on' and 'off'"
+
     n_classifiers = len(results)
     classes       = sorted(set(y_test))
 
     fig = plt.figure(figsize=(18, 12))
-    fig.suptitle("Appliance classification — model comparison", fontsize=12)
+    fig.suptitle(f"Appliance classification — model comparison ({event_label} events)", fontsize=12)
 
     # --- row 1: confusion matrices ---
     for i, (name, res) in enumerate(results.items()):
@@ -324,8 +348,8 @@ def plot_results(results, y_test, feature_cols, df_on, scaler):
 if __name__ == "__main__":
     features_path = os.path.join(DATA_DIR, "features.csv")
 
-    # Parse command-line arguments or get interactive choice
-    use_existing = parse_features_option()
+    # Parse command-line arguments
+    use_existing, event_type = parse_options()
 
     # Check if features already exist
     if os.path.exists(features_path) and use_existing is not False:
@@ -341,5 +365,5 @@ if __name__ == "__main__":
     else:
         df = generate_and_save_features(features_path)
 
-    results, y_test, feature_cols, scaler, X_test, df_on = train_and_evaluate(df)
-    plot_results(results, y_test, feature_cols, df_on, scaler)
+    results, y_test, feature_cols, scaler, X_test, df_filtered = train_and_evaluate(df, event_type=event_type)
+    plot_results(results, y_test, feature_cols, df_filtered, scaler, event_type=event_type)
